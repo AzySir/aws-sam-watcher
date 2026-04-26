@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/AWS-SAM-WATCHER-LOGO.png" alt="aws-sam-watcher logo" width="320" />
+</p>
+
 # aws-sam-watcher
 
 A small file watcher for **auto-rebuilding an AWS SAM local stack**. Watches `./src/` for changes and restarts your local SAM API on the configured port whenever a source file changes.
