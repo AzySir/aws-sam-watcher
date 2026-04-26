@@ -2,13 +2,25 @@
 
 A small file watcher for **auto-rebuilding an AWS SAM local stack**. Watches `./src/` for changes and restarts your local SAM API on the configured port whenever a source file changes.
 
+## About AWS SAM
+
+[AWS SAM (Serverless Application Model)](https://aws.amazon.com/serverless/sam/) is an open-source framework from AWS for building serverless applications. It extends CloudFormation with shorthand syntax for defining Lambda functions, API Gateway routes, DynamoDB tables, IAM roles, etc., all in a single `template.yaml` file.
+
+The **SAM CLI** (`sam` on the command line) lets you:
+
+- **`sam build`** — package your functions and their dependencies into a deployable artifact.
+- **`sam local start-api`** — emulate API Gateway + Lambda locally via Docker, so you can hit `http://localhost:3000` and exercise your stack without deploying.
+- **`sam deploy`** — push the built artifact to AWS using settings from `samconfig.toml`.
+
+This watcher exists because `sam local start-api` doesn't auto-rebuild on file changes — so it pairs the SAM CLI with a tiny Node script that recycles the local stack whenever you save.
+
 ## What it does
 
 - Watches `./src/` recursively using `node:fs.watch`.
 - On any `change` event:
   1. Finds whatever process is listening on port `3000` via `lsof -ti :3000`.
   2. Kills it with `kill -9`.
-  3. Spawns `make local` in zsh, inheriting stdio so SAM logs stream to your terminal (with `FORCE_COLOR=1`).
+  3. Spawns `make local`, inheriting stdio so SAM logs stream to your terminal (with `FORCE_COLOR=1`).
 
 ## Zero dependencies
 
@@ -26,9 +38,29 @@ That means you can drop `watcher.js` into any project and run it with `node watc
 - AWS SAM CLI installed (`sam --version`).
 - A `Makefile` with a `local` target that boots your SAM stack on port 3000 (see below).
 
+## Where to put it
+
+Drop `watcher.js` and the `Makefile` at the **root of your SAM project** — the same directory that contains your `samconfig.toml` and `template.yaml`. That's important for two reasons:
+
+- `sam build` and `sam local start-api` resolve `template.yaml` from the current working directory by default. Running `make local` from anywhere else means SAM can't find your stack.
+- `WATCH_PATH = './src/'` is resolved relative to wherever you launch `node watcher.js`. Most SAM projects put their Lambda source under `./src/` next to the template, so dropping the watcher at the root just works.
+
+Your project layout should end up looking roughly like this:
+
+```
+my-sam-project/
+├── samconfig.toml
+├── template.yaml
+├── Makefile          ← from this repo
+├── watcher.js        ← from this repo
+└── src/
+    └── handlers/
+        └── ...
+```
+
 ## Usage
 
-From the project root:
+From the project root (next to `template.yaml`):
 
 ```sh
 node watcher.js
@@ -38,20 +70,47 @@ Then edit any file under `./src/` and the watcher will kill whatever is on port 
 
 ## Configuration
 
-Edit the constants at the top of `watcher.js`:
+The two knobs you'll almost certainly want to change live at the top of `watcher.js`:
 
 ```js
 const PORT = 3000
 const WATCH_PATH = './src/'
 ```
 
-The build command itself is hardcoded on **line 29** of `watcher.js`:
+Tune them to match your repo:
+
+### `PORT`
+
+Whatever port your local stack listens on — the watcher kills this port before each rebuild so the next `sam local start-api` can bind to it cleanly.
+
+- Default `3000` matches `sam local start-api`'s default.
+- If you pass `sam local start-api --port 4000` (or set it in `samconfig.toml`), bump this to `4000` to match. **Mismatch here is the #1 footgun**: the watcher will kill the wrong port, your old SAM process keeps running on the real one, and the new one fails to bind with `EADDRINUSE`.
+- If you also run a frontend dev server on 3000, move SAM (and this constant) to a different port to avoid collisions.
+
+### `WATCH_PATH`
+
+The directory the watcher recurses into. Set this to wherever your handler source lives, **relative to where you run `node watcher.js`**.
+
+- `./src/` — typical SAM layout (`src/handlers/foo.js`, etc.).
+- `./functions/` — common alternative seen in some SAM templates.
+- `./packages/api/src/` — if your SAM app sits inside a monorepo workspace.
+- `./` — watch everything, but expect noisy rebuilds (it'll fire on `.git/`, `node_modules/`, `.aws-sam/`, etc., which is rarely what you want).
+
+Whatever path you choose, make sure it's the directory `sam build` actually consumes — watching `./lib/` while SAM builds from `./src/` means saves trigger rebuilds that don't include your changes.
+
+### The build command (line 29)
 
 ```js
 const child = spawn('make', ['local'], { ... })
 ```
 
-In this repo we shell out to `make local` because that's the convention for this AWS SAM project, but you can swap it for whatever build/run command suits your own workflow (e.g. `npm run dev`, `cargo run`, `docker compose up`, etc.).
+In this repo we shell out to `make local` because that's the convention for this AWS SAM project, but swap it for whatever fits your repo:
+
+- **Different make target:** `spawn('make', ['dev'], ...)` if your Makefile uses `dev` instead of `local`.
+- **No Makefile:** call `sam` directly — `spawn('sam', ['local', 'start-api', '--warm-containers', 'LAZY'], ...)`.
+- **Different stack entirely:** `spawn('npm', ['run', 'dev'], ...)`, `spawn('cargo', ['run'], ...)`, `spawn('docker', ['compose', 'up'], ...)`.
+
+The watcher itself doesn't care what command you run — it just kills the port and respawns.
 
 ## The Makefile
 
@@ -70,7 +129,41 @@ What each step does:
   - **`--skip-pull-image`** — don't re-pull the Lambda runtime Docker image on every start. Big speedup once you've pulled it once.
   - **`--warm-containers LAZY`** — keep Lambda containers alive between requests, created on first invocation. Subsequent calls skip the cold-start, which makes iterating dramatically faster.
 
-So the full loop is: save a file → watcher kills port 3000 → `sam build` repackages → `sam local start-api` boots warm containers → you hit `localhost:3000` and see your change.
+### The full loop
+
+```
+   ┌─────────────────────────┐
+   │  1. You save a file     │
+   │     under ./src/        │
+   └────────────┬────────────┘
+                │  fs.watch fires "change"
+                ▼
+   ┌─────────────────────────┐
+   │  2. Watcher kills       │
+   │     port 3000 (SIGKILL) │
+   └────────────┬────────────┘
+                │  spawn('make', ['local'])
+                ▼
+   ┌─────────────────────────┐
+   │  3. sam build           │
+   │     repackages Lambdas  │
+   │     into .aws-sam/build │
+   └────────────┬────────────┘
+                │
+                ▼
+   ┌─────────────────────────┐
+   │  4. sam local start-api │
+   │     boots warm          │
+   │     containers (LAZY)   │
+   └────────────┬────────────┘
+                │  listening on :3000
+                ▼
+   ┌─────────────────────────┐
+   │  5. You hit             │
+   │     localhost:3000      │
+   │     → see your change   │
+   └─────────────────────────┘
+```
 
 ## Notes
 
