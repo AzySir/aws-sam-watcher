@@ -1,0 +1,105 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version_type:
+        description: 'Version bump (Major / Minor / Bug fix)'
+        type: choice
+        required: true
+        default: patch
+        options:
+          - major
+          - minor
+          - patch
+      release_notes:
+        description: 'Release notes / comments'
+        type: string
+        required: true
+
+jobs:
+  lint:
+    name: ESLint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run ESLint
+        run: npx eslint .
+
+  release:
+    name: Create GitHub release
+    needs: lint
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Determine next version
+        id: version
+        run: |
+          set -euo pipefail
+
+          LATEST_TAG=$(git tag --list 'v*' --sort=-v:refname | head -n 1)
+          LATEST_TAG=${LATEST_TAG:-v0.0.0}
+          echo "Previous tag: $LATEST_TAG"
+
+          VERSION=${LATEST_TAG#v}
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$VERSION"
+
+          case "${VERSION_TYPE}" in
+            major)
+              MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0 ;;
+            minor)
+              MINOR=$((MINOR + 1)); PATCH=0 ;;
+            patch)
+              PATCH=$((PATCH + 1)) ;;
+            *)
+              echo "Unknown version type: ${VERSION_TYPE}" >&2
+              exit 1 ;;
+          esac
+
+          NEW_TAG="v${MAJOR}.${MINOR}.${PATCH}"
+          echo "Next tag: $NEW_TAG"
+
+          {
+            echo "previous_tag=${LATEST_TAG}"
+            echo "new_tag=${NEW_TAG}"
+          } >> "$GITHUB_OUTPUT"
+        env:
+          VERSION_TYPE: ${{ inputs.version_type }}
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_NOTES: ${{ inputs.release_notes }}
+          NEW_TAG: ${{ steps.version.outputs.new_tag }}
+          PREVIOUS_TAG: ${{ steps.version.outputs.previous_tag }}
+        run: |
+          set -euo pipefail
+
+          NOTES=$(printf '%s\n\n_Bumped %s → %s (%s) from %s_' \
+            "$RELEASE_NOTES" \
+            "$PREVIOUS_TAG" \
+            "$NEW_TAG" \
+            "${{ inputs.version_type }}" \
+            "$GITHUB_SHA")
+
+          gh release create "$NEW_TAG" \
+            --title "$NEW_TAG" \
+            --notes "$NOTES" \
+            --target "$GITHUB_SHA"

@@ -58,6 +58,63 @@ my-sam-project/
         └── ...
 ```
 
+## Install
+
+**Don't `git clone` this repo to use it** — you only need two files (`watcher.js` and `Makefile`). Cloning would drag in `eslint.config.mjs`, `.github/`, and the rest of the dev tooling that's irrelevant to consumers.
+
+Instead, `cd` into your SAM project root and `curl` the two files directly from GitHub.
+
+### Latest (track `main`)
+
+```sh
+curl -O https://raw.githubusercontent.com/AzySir/aws-sam-watcher/main/watcher.js
+curl -O https://raw.githubusercontent.com/AzySir/aws-sam-watcher/main/Makefile
+```
+
+This always grabs the current tip of `main` — fine for trying it out, but you're at the mercy of whatever's been pushed since.
+
+### Pinned to a release tag (recommended)
+
+GitHub's raw URLs accept any ref — branch, tag, or commit SHA — in the path. Swap `main` for a release tag (e.g. `v1.0.0`) to lock yourself to a specific version:
+
+```sh
+TAG=v1.0.0
+curl -O "https://raw.githubusercontent.com/AzySir/aws-sam-watcher/$TAG/watcher.js"
+curl -O "https://raw.githubusercontent.com/AzySir/aws-sam-watcher/$TAG/Makefile"
+```
+
+Pick a tag from the [releases page](https://github.com/AzySir/aws-sam-watcher/releases). Pinning means you decide when to upgrade — re-run the same commands with a newer `TAG` to bump.
+
+### Updating
+
+To upgrade, just re-run the curl commands with a newer `TAG`. `curl -O` overwrites the local file in place, so you go from `v1.0.0` → `v1.1.0` with:
+
+```sh
+TAG=v1.1.0
+curl -O "https://raw.githubusercontent.com/AzySir/aws-sam-watcher/$TAG/watcher.js"
+curl -O "https://raw.githubusercontent.com/AzySir/aws-sam-watcher/$TAG/Makefile"
+```
+
+> ⚠️ **Heads up: don't blindly overwrite your `Makefile`.**
+>
+> Most real SAM projects already have a `Makefile` with other targets (`deploy`, `test`, `lint`, etc.). If you `curl -O` the `Makefile` from this repo, you'll **wipe all of those out** — `curl -O` does a full file overwrite, not a merge.
+>
+> If your project already has a `Makefile`, do one of these instead:
+>
+> 1. **Curl to a temp file and copy the target across manually:**
+>    ```sh
+>    curl -o /tmp/watcher.Makefile "https://raw.githubusercontent.com/AzySir/aws-sam-watcher/$TAG/Makefile"
+>    # then copy the `local:` target into your existing Makefile
+>    ```
+> 2. **Just write the `local:` target by hand** — it's only three lines and unlikely to change much between releases:
+>    ```make
+>    local:
+>    	sam build
+>    	sam local start-api --skip-pull-image --warm-containers LAZY
+>    ```
+>
+> `watcher.js` is safe to overwrite freely on update — it's a standalone script with no project-specific contents.
+
 ## Usage
 
 From the project root (next to `template.yaml`):
