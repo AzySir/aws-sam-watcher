@@ -1,0 +1,12 @@
+#!/bin/sh
+# Lint staged JS files before allowing the commit.
+
+set -e
+
+files=$(git diff --cached --name-only --diff-filter=ACMR | grep -E '\.(js|mjs|cjs)$' || true)
+
+if [ -z "$files" ]; then
+  exit 0
+fi
+
+echo "$files" | xargs npx --no-install eslint

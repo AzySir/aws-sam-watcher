@@ -40,7 +40,7 @@ const watcher = () => {
         // the next build's `sam build` rmtree, causing the .mjs.map ENOENT.
         if (currentChild) {
             pendingRebuild = true
-            try { process.kill(-currentChild.pid, 'SIGKILL') } catch {}
+            try { process.kill(-currentChild.pid, 'SIGKILL') } catch { /* already exited */ }
             return
         }
 
