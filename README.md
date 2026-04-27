@@ -130,7 +130,7 @@ curl -O "https://raw.githubusercontent.com/AzySir/aws-sam-watcher/$TAG/Makefile"
 > 2. **Just write the `local:` target by hand** — it's only three lines and unlikely to change much between releases:
 >    ```make
 >    local:
->    	sam build
+>    	sam build --cached --parallel
 >    	sam local start-api --skip-pull-image --warm-containers LAZY
 >    ```
 >
@@ -176,6 +176,15 @@ The directory the watcher recurses into. Set this to wherever your handler sourc
 
 Whatever path you choose, make sure it's the directory `sam build` actually consumes — watching `./lib/` while SAM builds from `./src/` means saves trigger rebuilds that don't include your changes.
 
+### `CLEAN_BUILD_DIR`
+
+Whether to wipe `.aws-sam/build` (or whatever you set `BUILD_DIR` to) before every rebuild. Defaults to `false`.
+
+- **`false` (default)** — leave the build directory intact between rebuilds. This is what `sam build --cached` needs to do its job: SAM diffs the existing build artifacts against the source and only re-emits the functions that actually changed. With this off, a one-line edit in one function rebuilds *only that function*, which on a multi-function project is the difference between a 200ms rebuild and a 20-second one.
+- **`true` — scorched earth.** Deletes `BUILD_DIR` recursively before each rebuild. Useful when something gets weird — stale `.mjs.map` references, half-written artifacts after a crashed build, or you just want to convince yourself the next build is starting from a clean slate. Costs you the `--cached` speedup since there's nothing for SAM to compare against.
+
+The wipe also takes down `.aws-sam/build/<FunctionName>/` directories that running Docker containers may have mounted; if you flip this on while `sam local start-api` is up you'll likely need a full restart. Default-off avoids that footgun.
+
 ### The build command (line 29)
 
 ```js
@@ -196,13 +205,16 @@ The watcher invokes `make local`, which is defined in the included `Makefile`:
 
 ```make
 local:
-	sam build
+	sam build --cached --parallel
 	sam local start-api --skip-pull-image --warm-containers LAZY
 ```
 
 What each step does:
 
 - **`sam build`** — packages your Lambda functions and dependencies into `.aws-sam/build/`, ready for local invocation.
+  - **`--cached`** — reuses build artifacts for functions whose source hasn't changed. SAM hashes your source files and stores the cache under `.aws-sam/cache/`, so on the next rebuild it can skip any function that's untouched. On a multi-function project this is the difference between "rebuild everything every save" and "rebuild only what you edited" — typically a 5–10× speedup.
+  - **`--parallel`** — when multiple functions *do* need rebuilding, build them concurrently instead of one at a time. Free win on multi-function projects, no-op on single-function ones.
+  - See [`CLEAN_BUILD_DIR`](#clean_build_dir) below — the watcher's default leaves `.aws-sam/build` intact between rebuilds so `--cached` actually pays off. Flip it on if you ever need scorched earth.
 - **`sam local start-api`** — spins up a local API Gateway emulator on port 3000 that routes requests to your Lambdas via Docker.
   - **`--skip-pull-image`** — don't re-pull the Lambda runtime Docker image on every start. Big speedup once you've pulled it once.
   - **`--warm-containers LAZY`** — keep Lambda containers alive between requests, created on first invocation. Subsequent calls skip the cold-start, which makes iterating dramatically faster.
