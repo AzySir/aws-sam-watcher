@@ -4,6 +4,7 @@ import { spawn, spawnSync } from 'child_process'
 const PORT = 3000
 const WATCH_PATH = './src/'
 const BUILD_DIR = './.aws-sam/build'
+const CLEAN_BUILD_DIR = false
 
 const killPort = (port) => {
     const lsof = spawnSync('lsof', ['-ti', `:${port}`], { encoding: 'utf8' })
@@ -51,6 +52,7 @@ const watcher = () => {
     const startBuild = () => {
         if (currentChild) {
             pendingRebuild = true
+            // eslint-disable-next-line no-empty 
             try { process.kill(-currentChild.pid, 'SIGKILL') } catch {}
             killPort(PORT)
             cleanupOrphanContainers()
@@ -59,7 +61,9 @@ const watcher = () => {
 
         killPort(PORT)
         cleanupOrphanContainers()
-        rmSync(BUILD_DIR, { recursive: true, force: true })
+        if (CLEAN_BUILD_DIR) {
+            rmSync(BUILD_DIR, { recursive: true, force: true })
+        }
         console.log("Starting make local")
         currentChild = spawn('make', ['local'], {
             stdio: 'inherit',
