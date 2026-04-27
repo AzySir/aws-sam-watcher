@@ -89,6 +89,23 @@ curl -O "https://raw.githubusercontent.com/AzySir/aws-sam-watcher/$TAG/Makefile"
 
 Pick a tag from the [releases page](https://github.com/AzySir/aws-sam-watcher/releases). Pinning means you decide when to upgrade — re-run the same commands with a newer `TAG` to bump.
 
+### Latest tag (auto-resolved)
+
+If you want "always the latest stable tag" without manually bumping `TAG`, ask the GitHub API for the most recent release tag and substitute it:
+
+```sh
+TAG=$(curl -s https://api.github.com/repos/AzySir/aws-sam-watcher/releases/latest | grep -oE '"tag_name": "[^"]+"' | cut -d'"' -f4)
+curl -O "https://raw.githubusercontent.com/AzySir/aws-sam-watcher/$TAG/watcher.js"
+curl -O "https://raw.githubusercontent.com/AzySir/aws-sam-watcher/$TAG/Makefile"
+```
+
+Why not just use `raw.githubusercontent.com/.../latest/...`? GitHub's raw URLs don't accept `latest` as a ref — only branches, tags, or SHAs. The API call is the workaround.
+
+Caveats:
+
+- The unauthenticated GitHub API is rate-limited to 60 requests/hour per IP. Fine for occasional updates, not for CI that runs constantly. In CI, set `Authorization: Bearer $GITHUB_TOKEN` or pin to an explicit `TAG` instead.
+- "Latest" follows whatever you cut next — re-running this script can silently upgrade you across breaking changes. If that matters, use the pinned-tag approach above.
+
 ### Updating
 
 To upgrade, just re-run the curl commands with a newer `TAG`. `curl -O` overwrites the local file in place, so you go from `v1.0.0` → `v1.1.0` with:
